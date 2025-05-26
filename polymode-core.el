@@ -641,12 +641,12 @@ forward."
          (block-col (if (< cur-indent cur-col)
                         cur-indent
                       (1- cur-indent)))
-         (end (point-at-eol)))
+         (end (line-end-position)))
     (forward-line 1)
     (while (and (not (eobp))
                 (or (looking-at-p "[ \t]*$")
                     (and (> (current-indentation) block-col)
-                         (setq end (point-at-eol)))))
+                         (setq end (line-end-position)))))
       (forward-line 1))
     ;; end at bol for the sake of indentation
     (setq end (min (point-max) (1+ end)))
@@ -1048,7 +1048,7 @@ switch."
                       ((eq mode 'host) (pm-base-buffer))
                       (mode (or (pm-get-buffer-of-mode mode)
                                 ;; not throwing because in auto-modes mode might not
-                                ;; be installed yet and there is no way install it
+                                ;; be installed yet and there is no way to install it
                                 ;; from here
                                 buffer))))))
     ;; no further action if BUFFER is already the current buffer
@@ -1060,6 +1060,8 @@ switch."
                      (pm-base-buffer) buffer)
       (pm--move-vars polymode-move-these-vars-from-old-buffer
                      cbuf buffer)
+      ;; synchronize again just in case
+      (pm--synchronize-points cbuf)
       (if visibly
           ;; Slow, visual selection. Don't perform in foreign indirect buffers.
           (when own
@@ -1119,11 +1121,21 @@ switch."
     (pm--run-hooks pm/chunkmode :switch-buffer-functions old-buffer new-buffer)))
 
 (defun pm--move-overlays (from-buffer to-buffer)
+  "Delete all overlays in TO-BUFFER, then copy FROM-BUFFER overlays to it."
+  ;; We cannot simply move overlays from one buffer to the antoher as this would alter the
+  ;; display of the buffer in another window (see #348 for an example with org mode).
+  (delete-all-overlays to-buffer)
   (with-current-buffer from-buffer
     (mapc (lambda (o)
             (unless (or (overlay-get o 'linum-str)
-                        (overlay-get o 'yas--snippet))
-              (move-overlay o (overlay-start o) (overlay-end o) to-buffer)))
+                        (overlay-get o 'yas--snippet)
+                        (memq (overlay-get o 'face) '(region show-paren-match)))
+              (let ((o-copy (copy-overlay o))
+		    (inhibit-redisplay t)
+		    (inhibit-modification-hooks t)
+                    (start (overlay-start o))
+                    (end (overlay-end o)))
+                (move-overlay o-copy start end  to-buffer))))
           (overlays-in 1 (1+ (buffer-size))))))
 
 (defun pm--move-vars (vars from-buffer &optional to-buffer)
@@ -1395,17 +1407,21 @@ Placed with high priority in `after-change-functions' hook."
         ;;   (remove-hook 'after-change-functions 'jit-lock-after-change t))
         ))))
 
-(defun pm--run-other-hooks (allow syms hook &rest args)
-  (when (and allow polymode-mode pm/polymode)
-    (dolist (sym syms)
+(defun pm--run-hooks-in-other-buffers (function-names hook-name &rest args)
+  "Run each function in FUNCTION-NAMES in other polymode buffers.
+But, only if it is part of the hook HOOK-NAME. Each function is called witih arguments ARGS."
+  (when (and polymode-mode pm/polymode)
+    (let ((cbuf (current-buffer)))
       (dolist (buf (eieio-oref pm/polymode '-buffers))
         (when (buffer-live-p buf)
-          (unless (eq buf (current-buffer))
+          (unless (eq buf cbuf)
             (with-current-buffer buf
-              (when (memq sym (symbol-value hook))
-                (if args
-                    (apply sym args)
-                  (funcall sym))))))))))
+              (let ((hooks (symbol-value hook-name)))
+                (dolist (sym function-names)
+                  (when (memq sym hooks)
+                    (if args
+                        (apply sym args)
+                      (funcall sym))))))))))))
 
 ;; BUFFER SAVE
 ;; TOTHINK: add auto-save-hook?
@@ -1423,17 +1439,17 @@ declared in the base buffer is triggered.")
   "Run after-save-hooks in indirect buffers.
 Only those in `polymode-run-these-after-save-functions-in-other-buffers'
 are triggered if present."
-  (pm--run-other-hooks t
-                       polymode-run-these-before-save-functions-in-other-buffers
-                       'after-save-hook))
+  (pm--run-hooks-in-other-buffers
+   polymode-run-these-before-save-functions-in-other-buffers
+   'after-save-hook))
 
 (defun polymode-after-save ()
   "Run after-save-hooks in indirect buffers.
 Only those in `polymode-run-these-after-save-functions-in-other-buffers'
 are triggered if present."
-  (pm--run-other-hooks t
-                       polymode-run-these-after-save-functions-in-other-buffers
-                       'after-save-hook))
+  (pm--run-hooks-in-other-buffers
+   polymode-run-these-after-save-functions-in-other-buffers
+   'after-save-hook))
 
 
 ;; change hooks
@@ -1453,19 +1469,22 @@ Placed with low priority in `before-change-functions' hook."
       (with-current-buffer buf
         (when lsp-mode
           (setq pm--lsp-before-change-end-position (pm--lsp-position end))))))
-  (pm--run-other-hooks pm-allow-before-change-hook
-                       polymode-run-these-before-change-functions-in-other-buffers
-                       'before-change-functions
-                       beg end))
+  (when pm-allow-before-change-hook
+   (pm--run-hooks-in-other-buffers
+    polymode-run-these-before-change-functions-in-other-buffers
+    'before-change-functions
+    beg end)))
 
 (defun polymode-after-change (beg end len)
   "Polymode after-change fixes.
 Run `polymode-run-these-after-change-functions-in-other-buffers'.
 Placed with low priority in `after-change-functions' hook."
-  (pm--run-other-hooks pm-allow-after-change-hook
-                       polymode-run-these-after-change-functions-in-other-buffers
-                       'after-change-functions
-                       beg end len))
+  ;; ensure points are synchronized (after-change runs BEFORE post-command-hook)
+  (when pm-allow-after-change-hook
+    (pm--run-hooks-in-other-buffers
+     polymode-run-these-after-change-functions-in-other-buffers
+     'after-change-functions
+     beg end len)))
 
 (defvar polymode-run-these-pre-commands-in-other-buffers nil
   "These commands, if present in `pre-command-hook', are run in other bufers.")
@@ -1477,13 +1496,13 @@ Placed with low priority in `after-change-functions' hook."
 Currently synchronize points and runs
 `polymode-run-these-pre-commands-in-other-buffers' if any. Runs in
 local `pre-command-hook' with very high priority."
-  (pm--synchronize-points (current-buffer))
-  (condition-case err
-      (pm--run-other-hooks pm-allow-pre-command-hook
-                           polymode-run-these-pre-commands-in-other-buffers
-                           'pre-command-hook)
-    (error (message "error polymode-pre-command run other hooks: (%s) %s"
-                    (point) (error-message-string err)))))
+  (when pm-allow-pre-command-hook
+    (condition-case err
+        (pm--run-hooks-in-other-buffers
+         polymode-run-these-pre-commands-in-other-buffers
+         'pre-command-hook)
+      (error (message "error polymode-pre-command run other hooks: (%s) %s"
+                      (point) (error-message-string err))))))
 
 (defun polymode-post-command ()
   "Select the buffer relevant buffer and run post-commands in other buffers.
@@ -1503,9 +1522,10 @@ appropriate. This function is placed into local
       (condition-case err
           (if (eq cbuf (current-buffer))
               ;; 1. same buffer, run hooks in other buffers
-              (pm--run-other-hooks pm-allow-post-command-hook
-                                   polymode-run-these-post-commands-in-other-buffers
-                                   'post-command-hook)
+              (when pm-allow-post-command-hook
+               (pm--run-hooks-in-other-buffers
+                polymode-run-these-post-commands-in-other-buffers
+                'post-command-hook))
             ;; 2. Run all hooks in this (newly switched to) buffer
             (run-hooks 'post-command-hook))
         (error (message "error in polymode-post-command run other hooks: (%s) %s"
@@ -2032,17 +2052,19 @@ Elements of LIST can be either strings or symbols."
   (when (and polymode-mode
              (buffer-live-p buffer))
     (let* ((bufs (eieio-oref pm/polymode '-buffers))
-           ;; (buffer (or buffer
-           ;;             (cl-loop for b in bufs
-           ;;                      if (and (buffer-live-p b)
-           ;;                              (buffer-local-value 'pm/current b))
-           ;;                      return b)
-           ;;             (current-buffer)))
            (pos (with-current-buffer buffer (point))))
       (dolist (b bufs)
         (when (buffer-live-p b)
           (with-current-buffer b
             (goto-char pos)))))))
+
+(defmacro pm-with-synchronized-points (&rest body)
+  "Run BODY and ensure the points in all polymode buffers are synchronized before and after BODY."
+  (declare (indent 0) (debug (body)))
+  (pm--synchronize-points)
+  `(prog1
+       ,@body
+     (pm--synchronize-points)))
 
 (defun pm--completing-read (prompt collection &optional predicate require-match
                                    initial-input hist def inherit-input-method)
