@@ -110,7 +110,7 @@ Currently, we only use it to track renames of the buffer.")
 
 
 (defun pm--buffer-name (&optional hidden)
-  (let ((name (if-let ((bbuf (buffer-base-buffer)))
+  (let ((name (if-let* ((bbuf (buffer-base-buffer)))
                   (let ((postfix (replace-regexp-in-string "poly-\\|-mode" "" (symbol-name major-mode)))
                         (base-name (buffer-local-value 'pm--base-buffer-name bbuf)))
                     (format "%s[%s]" (replace-regexp-in-string "^ " "" base-name)
@@ -194,9 +194,9 @@ inner chunk (such as in markdown mode), the detected symbol might
 not correspond to the desired mode. This alist maps discovered
 symbols into desired modes. For example
 
-  (add-to-list 'polymode-mode-name-aliases '(julia . ess-julia))
+  (add-to-list \\='polymode-mode-name-aliases \\='(julia . ess-julia))
 
-will cause installation of `ess-julia-mode' in markdown ```julia chunks."
+will cause installation of `ess-julia-mode' in markdown julia chunks."
   :group 'polymode
   :type 'alist)
 
@@ -874,7 +874,7 @@ forward spans from pos."
                           (cons (point-max) (point-max)))))
             (when can-overlap
               (goto-char (cdr head))
-              (when-let ((hbeg (car (funcall head-matcher 1))))
+              (when-let* ((hbeg (car (funcall head-matcher 1))))
                 (when (< hbeg (car tail))
                   (setq tail (cons hbeg hbeg)))))
             (list (car head) (cdr head) (car tail) (cdr tail))))))))
@@ -926,7 +926,7 @@ TYPE is either a symbol or a list of symbols of span types."
   (unless pm-initialization-in-progress
     (when global-hook
       (run-hooks global-hook))
-    (pm--run-hooks object :init-functions (or type 'host))))
+    (pm--run-hooks object 'init-functions (or type 'host))))
 
 (defun pm--collect-parent-slots (object slot &optional do-when inclusive)
   "Descend into parents of OBJECT and return a list of SLOT values.
@@ -940,7 +940,7 @@ of the first object for which DO-WHEN failed."
         (failed nil))
     (while inst
       (if (not (slot-boundp inst slot))
-          (setq inst (and (slot-boundp inst :parent-instance)
+          (setq inst (and (slot-boundp inst 'parent-instance)
                           (eieio-oref inst 'parent-instance)))
         (push (eieio-oref inst slot) vals)
         (setq inst (and
@@ -950,7 +950,7 @@ of the first object for which DO-WHEN failed."
                           (or (funcall do-when inst)
                               (and inclusive
                                    (setq failed t)))))
-                    (slot-boundp inst :parent-instance)
+                    (slot-boundp inst 'parent-instance)
                     (eieio-oref inst 'parent-instance)))))
     vals))
 
@@ -1099,7 +1099,10 @@ switch."
 
     (pm--move-overlays old-buffer new-buffer)
 
-    (switch-to-buffer new-buffer)
+    ;; make sure we display in the same window as the old buffer (#337)
+    (let ((switch-to-buffer-obey-display-actions))
+     (switch-to-buffer new-buffer nil 'force-same-window))
+
     (bury-buffer-internal old-buffer)
     (set-window-prev-buffers nil (assq-delete-all old-buffer (window-prev-buffers nil)))
 
@@ -1125,8 +1128,8 @@ switch."
       (set-window-start (get-buffer-window new-buffer t) window-start))
 
     (run-hook-with-args 'polymode-after-switch-buffer-hook old-buffer new-buffer)
-    (pm--run-hooks pm/polymode :switch-buffer-functions old-buffer new-buffer)
-    (pm--run-hooks pm/chunkmode :switch-buffer-functions old-buffer new-buffer)))
+    (pm--run-hooks pm/polymode 'switch-buffer-functions old-buffer new-buffer)
+    (pm--run-hooks pm/chunkmode 'switch-buffer-functions old-buffer new-buffer)))
 
 (defun pm--move-overlays (from-buffer to-buffer)
   "Delete all overlays in TO-BUFFER, then copy FROM-BUFFER overlays to it."
@@ -1139,8 +1142,6 @@ switch."
                         (overlay-get o 'yas--snippet)
                         (memq (overlay-get o 'face) '(region show-paren-match)))
               (let ((o-copy (copy-overlay o))
-		    (inhibit-redisplay t)
-		    (inhibit-modification-hooks t)
                     (start (overlay-start o))
                     (end (overlay-end o)))
                 (move-overlay o-copy start end  to-buffer))))
@@ -1218,7 +1219,6 @@ spans. Two adjacent spans might have same major mode, thus
       (widen)
       (let* ((hostmode (eieio-oref pm/polymode '-hostmode))
              (pos beg)
-             (ttype 'dummy)
              (span (pm-innermost-span beg))
              (nspan span)
              (ttype (pm-true-span-type span))
@@ -1417,7 +1417,8 @@ Placed with high priority in `after-change-functions' hook."
 
 (defun pm--run-hooks-in-other-buffers (function-names hook-name &rest args)
   "Run each function in FUNCTION-NAMES in other polymode buffers.
-But, only if it is part of the hook HOOK-NAME. Each function is called witih arguments ARGS."
+But, only if it is part of the hook HOOK-NAME. Each function is called
+witih arguments ARGS."
   (when (and polymode-mode pm/polymode)
     (let ((cbuf (current-buffer)))
       (dolist (buf (eieio-oref pm/polymode '-buffers))
@@ -1455,16 +1456,17 @@ are triggered if present."
   "Run after-save-hooks in indirect buffers.
 Only those in `polymode-run-these-after-save-functions-in-other-buffers'
 are triggered if present."
-  (unless (equal (buffer-name) pm--base-buffer-name)
-    (let ((cbuf (current-buffer)))
-      ;; Ensure we are in the base-buffer by accident
-      (cl-assert (eq (buffer-base-buffer) nil))
-      (setq pm--base-buffer-name (buffer-name))
-      ;; Rename indirect buffers (#346)
-      (dolist (buf (eieio-oref pm/polymode '-buffers))
-        (unless (eq buf cbuf)
-          (with-current-buffer buf
-            (rename-buffer (pm--buffer-name (not (get-buffer-window buf 'visible)))))))))
+  (let ((new-name (replace-regexp-in-string "^ +" "" (buffer-name))))
+   (unless (equal new-name pm--base-buffer-name)
+     (let ((cbuf (current-buffer)))
+       ;; Ensure we are in the base-buffer
+       (cl-assert (eq (buffer-base-buffer) nil))
+       (setq pm--base-buffer-name new-name)
+       ;; Rename indirect buffers (#346)
+       (dolist (buf (eieio-oref pm/polymode '-buffers))
+         (unless (eq buf cbuf)
+           (with-current-buffer buf
+             (rename-buffer (pm--buffer-name (not (get-buffer-window buf 'visible))))))))))
   (pm--run-hooks-in-other-buffers
    polymode-run-these-after-save-functions-in-other-buffers
    'after-save-hook))
@@ -1476,12 +1478,15 @@ are triggered if present."
 (defvar polymode-run-these-after-change-functions-in-other-buffers nil
   "After-change functions to run in all other buffers.")
 
+;; FIXME: LSP specific; move this to compat somehow
+(declare-function pm--lsp-position "polymode-compat")
+(defvar-local pm--lsp-before-change-end-position nil)
+
 (defun polymode-before-change (beg end)
   "Polymode before-change fixes.
 Run `polymode-run-these-before-change-functions-in-other-buffers'.
 Placed with low priority in `before-change-functions' hook."
   (pm--prop-put :before-change-range (cons beg end))
-  ;; FIXME: LSP specific move this out somehow
   (when (boundp 'lsp-mode)
     (dolist (buf (eieio-oref pm/polymode '-buffers))
       (with-current-buffer buf
@@ -1954,11 +1959,12 @@ Return FALLBACK if non-nil, otherwise the value of
                 (fboundp polymode-default-inner-mode))
         polymode-default-inner-mode)
       (when (or (eq fallback 'host)
-                (fboundp fallback))
+                (and (fboundp fallback)
+                     (functionp fallback)))
         fallback)
       'poly-fallback-mode))
     ;; proper mode symbol
-    ((and (symbolp name) (fboundp name) name))
+    ((and (symbolp name) (and (fboundp name) (functionp name)) name))
     ;; compute from name
     ((let* ((str (pm--symbol-name
                   (or (cdr (assq (intern (pm--symbol-name name))
@@ -1970,11 +1976,11 @@ Return FALLBACK if non-nil, otherwise the value of
        (or
         ;; direct search
         (let ((mode (intern mname)))
-          (when (fboundp mode)
+          (when (and (fboundp mode) (functionp mode))
             mode))
         ;; downcase
         (let ((mode (intern (downcase mname))))
-          (when (fboundp mode)
+          (when (and (fboundp mode) (functionp mode))
             mode))
         ;; auto-mode alist
         (let ((dummy-file (concat "a." str)))
@@ -1983,10 +1989,11 @@ Return FALLBACK if non-nil, otherwise the value of
                            (not (string-match-p "^poly-" (symbol-name v))))
                    return v))
         (when (or (eq polymode-default-inner-mode 'host)
-                  (fboundp polymode-default-inner-mode))
+                  (and (fboundp polymode-default-inner-mode)
+                       (functionp polymode-default-inner-mode)))
           polymode-default-inner-mode)
         (when (or (eq fallback 'host)
-                  (fboundp fallback))
+                  (and (fboundp fallback) (functionp fallback)))
           fallback)
         'poly-fallback-mode))))))
 
@@ -1997,7 +2004,7 @@ Return FALLBACK if non-nil, otherwise the value of
       (setq VALS (append (and (slot-boundp object slot) ; don't cascade
                               (eieio-oref object slot))
                          VALS)
-            object (and (slot-boundp object :parent-instance)
+            object (and (slot-boundp object 'parent-instance)
                         (eieio-oref object 'parent-instance))))
     VALS))
 
@@ -2077,7 +2084,8 @@ Elements of LIST can be either strings or symbols."
             (goto-char pos)))))))
 
 (defmacro pm-with-synchronized-points (&rest body)
-  "Run BODY and ensure the points in all polymode buffers are synchronized before and after BODY."
+  "Run BODY and ensure the points in all polymode buffers are
+synchronized before and after BODY."
   (declare (indent 0) (debug (body)))
   (pm--synchronize-points)
   `(prog1

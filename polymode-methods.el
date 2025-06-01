@@ -63,7 +63,7 @@ Ran by the polymode mode function."
           ;; Set if nil! This allows unspecified host chunkmodes to be used in
           ;; minor modes.
           (host-mode (or (eieio-oref hostmode 'mode)
-                         (oset hostmode :mode major-mode))))
+                         (oset hostmode 'mode major-mode))))
       ;; FIXME: mode hooks and local var hacking happens here. Need to move it
       ;; to the end.
       (pm--mode-setup host-mode)
@@ -494,7 +494,6 @@ Function used for `indent-region-function'."
           (let* ((end-span (copy-marker (nth 2 span)))
                  (end1 (min end end-span)))
             (goto-char beg)
-            ;; (pm-switch-to-buffer)
             ;; indent first line separately
             (pm-indent-line (nth 3 span) span)
             (beginning-of-line 2)

@@ -53,10 +53,10 @@ Not effective after loading the polymode library.
 Instead of setting this key you can programatically bind it directly
 in `polymode-minor-mode-map` keymap:
 
- (define-key polymode-minor-mode-map (kbd \"M-n\") nil)  ;unbind the default M-n prefix
+ (define-key polymode-minor-mode-map (kbd \"M-n\") nil)
+ ;unbind the default M-n prefix
  (define-key polymode-minor-mode-map (kbd \"C-c n\") polymode-map)
 ")
-
 
 (defvar polymode-map
   (let ((map (define-prefix-command 'polymode-map)))
@@ -76,8 +76,8 @@ in `polymode-minor-mode-map` keymap:
     (define-key map "E" #'polymode-set-exporter)
     (define-key map "w" #'polymode-weave)
     (define-key map "W" #'polymode-set-weaver)
-    (define-key map "t" #'polymode-tangle)
-    (define-key map "T" #'polymode-set-tangler)
+    ;; (define-key map "t" #'polymode-tangle)
+    ;; (define-key map "T" #'polymode-set-tangler)
     (define-key map "$" #'polymode-show-process-buffer)
     map)
   "Polymode prefix map.
@@ -443,7 +443,7 @@ non-nil, don't throw if `polymode-eval-region-function' is nil."
         (pi parent-conf)
         (parent-map))
     (while pi
-      (let ((map (and (slot-boundp pi :keylist)
+      (let ((map (and (slot-boundp pi 'keylist)
                       (eieio-oref pi 'keylist))))
         (when map
           (if (and (symbolp map)
@@ -453,7 +453,7 @@ non-nil, don't throw if `polymode-eval-region-function' is nil."
               (setq parent-map map
                     pi nil)
             ;; list, descend to next parent and append the key list to keylist
-            (setq pi (and (slot-boundp pi :parent-instance)
+            (setq pi (and (slot-boundp pi 'parent-instance)
                           (eieio-oref pi 'parent-instance))
                   keylist (append map keylist))))))
     (when (and parent-map (symbolp parent-map))
