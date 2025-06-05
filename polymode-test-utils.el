@@ -54,6 +54,10 @@ Look into tests/input directory then in samples directory."
                  if (file-exists-p f) return f)
         (error "No file with name '%s' found in '%s'" name default-directory))))
 
+(defun pm-test-running-on-github-p ()
+  (string= (downcase (or (getenv "GITHUB_ACTIONS") "false")) "true"))
+
+
 (defun pm-test-matcher (string span-alist matcher &optional dry-run)
   (with-temp-buffer
     (insert string)
@@ -82,8 +86,8 @@ Look into tests/input directory then in samples directory."
         (message ")"))
       nil)))
 
-(defmacro pm-test-run-on-string (mode string &rest body)
-  "Run BODY in a temporary buffer containing STRING in MODE.
+(defmacro pm-test-run-on-string (mode string position &rest body)
+  "Run BODY in a temporary buffer containing STRING in MODE at POSITION.
 MODE is a quoted symbol."
   (declare (indent 1) (debug (form form body)))
   `(let ((*buf* "*pm-test-string-buffer*"))
@@ -98,7 +102,7 @@ MODE is a quoted symbol."
        (and (bound-and-true-p syntax-propertize-function)
             (not (local-variable-p 'parse-sexp-lookup-properties))
             (setq-local parse-sexp-lookup-properties t))
-       (goto-char (point-min))
+       (funcall-interactively 'goto-char ,position)
        (let ((poly-lock-allow-background-adjustment nil))
          (when polymode-mode
            ;; font-lock not activated in batch mode
@@ -111,7 +115,7 @@ MODE is a quoted symbol."
 (defun pm-test-spans (mode string)
   (declare (indent 1))
   (pm-test-run-on-string mode
-    string
+    string 1
     (pm-map-over-spans
      (lambda (span)
        (let ((range0 (pm-span-to-range span)))
@@ -190,7 +194,7 @@ MODE is a quoted symbol."
            (smode major-mode)
            (stext (buffer-substring-no-properties sbeg send))
            ;; other buffer
-           (ref-buf (pm-test-run-on-string smode stext))
+           (ref-buf (pm-test-run-on-string smode stext 1))
            (ref-pos 1))
       (when pm-verbose
         (message "---- testing %s ----" (pm-format-span span t)))

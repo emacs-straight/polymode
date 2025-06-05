@@ -72,8 +72,6 @@ Elements of ALIST that are not conses are ignored."
 
 ;;; Various Wrappers for Around Advice
 
-(defvar *span* nil)
-
 ;; advice doesn't provide named symbols. So we need to define specialized
 ;; wrappers for some key functions (unfinished)
 (defmacro pm-define-wrapp-protected (fun)
