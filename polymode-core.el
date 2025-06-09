@@ -1123,6 +1123,7 @@ switch."
     (let ((dedicated-flag (window-dedicated-p)))
       (when dedicated-flag
         (set-window-dedicated-p nil nil))
+      (set-buffer new-buffer)
       (set-window-buffer nil new-buffer 'keep-margins)
       (when dedicated-flag
         (set-window-dedicated-p nil dedicated-flag)))
@@ -1138,10 +1139,9 @@ switch."
 
     (setq pm/current t)
 
-    ;; fixme: what is the right way to do this ... activate-mark-hook?
+    (set-mark mkt)
     (if (not ractive)
         (deactivate-mark)
-      (set-mark mkt)
       (activate-mark))
 
     (when pm-hide-implementation-buffers
@@ -1165,7 +1165,7 @@ switch."
     (mapc (lambda (o)
             (unless (or (overlay-get o 'linum-str)
                         (overlay-get o 'yas--snippet)
-                        (memq (overlay-get o 'face) '(region show-paren-match)))
+                        (memq (overlay-get o 'face) '(region show-paren-match hl-line)))
               (let ((o-copy (copy-overlay o))
                     (start (overlay-start o))
                     (end (overlay-end o)))
