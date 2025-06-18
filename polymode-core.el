@@ -1156,21 +1156,59 @@ switch."
     (pm--run-hooks pm/polymode 'switch-buffer-functions old-buffer new-buffer)
     (pm--run-hooks pm/chunkmode 'switch-buffer-functions old-buffer new-buffer)))
 
+
+(defvar polymode-copy-overlays-with-these-properties-from-old-buffer '(invisible)
+  "Overlays with these non-nil properties should be copied instead of moved.
+The overlay is matched if `pm--overlay-match-p' returns non-nil with
+any of the properties in the list.")
+
+(defvar polymode-ignore-overlays-with-these-properties
+  '(linum-str yas--snippet (face region show-paren-match hl-line))
+  "Overlays with these properties should be left untouched when switching polymode buffers.
+The overlay is matched if `pm--overlay-match-p' returns non-nil with any
+of the properties in the list.")
+
+(defun pm--overlay-match-p (overlay prop)
+  "Return non-nil if the overlay's properties match PROP.
+When PROP is a symbol, return non-nil if the overlay contains that property
+and its value is non-nil. When PROP is a list, return non-nil if the value
+of the overlay's property (car PROP) is one of the (cdr PROP).
+"
+  (if (symbolp prop)
+      (overlay-get overlay prop)
+    (memq (overlay-get overlay (car prop)) (cdr prop))))
+
 (defun pm--move-overlays (from-buffer to-buffer)
   "Delete all overlays in TO-BUFFER, then copy FROM-BUFFER overlays to it."
-  ;; We cannot simply move overlays from one buffer to the antoher as this would alter the
-  ;; display of the buffer in another window (see #348 for an example with org mode).
-  (delete-all-overlays to-buffer)
+  ;; Some overlays need to be copied to avoid changing the display in other windows
+  ;; which display same polymode buffer
+  ;; #348 for an example where overaly with invisible property should be copied
+  ;; #350 for examples where overlays should be moved (most of them)
+
+  ;; Ensure that the overlays which we will copy are not already in the to-buffer. This
+  ;; is a rough brush, but there is no way currently to identify the overlays more
+  ;; precisely, and it's probably not worth the extra effort.
+  (with-current-buffer to-buffer
+    (mapc (lambda (o)
+            (when
+                (cl-some (lambda (p) (pm--overlay-match-p o p))
+                         polymode-copy-overlays-with-these-properties-from-old-buffer)
+              (delete-overlay o)))
+          (overlays-in 1 (1+ (buffer-size)))))
+
   (with-current-buffer from-buffer
     (mapc (lambda (o)
-            (unless (or (overlay-get o 'linum-str)
-                        (overlay-get o 'yas--snippet)
-                        (memq (overlay-get o 'face) '(region show-paren-match hl-line)))
-              (let ((o-copy (copy-overlay o))
-                    (start (overlay-start o))
-                    (end (overlay-end o)))
-                (move-overlay o-copy start end  to-buffer))))
-          (overlays-in 1 (1+ (buffer-size))))))
+            (unless (cl-some (lambda (p) (pm--overlay-match-p o p))
+                             polymode-ignore-overlays-with-these-properties)
+              (if (cl-some (lambda (p) (pm--overlay-match-p o p))
+                           polymode-copy-overlays-with-these-properties-from-old-buffer)
+                  (let ((o-copy (copy-overlay o))
+                        (start (overlay-start o))
+                        (end (overlay-end o)))
+                    (move-overlay o-copy start end  to-buffer))
+                (move-overlay o (overlay-start o) (overlay-end o) to-buffer))))
+          (overlays-in 1 (1+ (buffer-size)))))
+  )
 
 (defun pm--move-vars (vars from-buffer &optional to-buffer)
   (let ((to-buffer (or to-buffer (current-buffer))))
